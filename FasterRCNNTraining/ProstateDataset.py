@@ -11,24 +11,24 @@ from torchvision.transforms.v2 import functional as F
 
 
 class ProstateDataset(torch.utils.data.Dataset):
-    def __init__(self, root, transforms=None, augmentation_count=1):
+    def __init__(self, root, transforms=None, oversampling_factor=1):
         """
         Set the root and transforms variables. Do some minor dataset validation.
 
         :param root: Directory containing images and labels folders.
         :param transforms: Transformers to be used on this dataset.
-        :param augmentation_count: Increase dataset size by this amount (oversampling).
+        :param oversampling_factor: Increase dataset size by this amount (oversampling).
         """
         self.root = root
         self.transforms = transforms
-        self.augmentation_count = augmentation_count
+        self.oversampling_factor = oversampling_factor
         self.imgs = list(natsorted(os.listdir(os.path.join(root, "images"))))
         self.labels = list(natsorted(os.listdir(os.path.join(root, "labels"))))
 
         self.validate_dataset()
 
     def __getitem__(self, idx):
-        original_idx = idx // self.augmentation_count
+        original_idx = idx // self.oversampling_factor
         img_path = os.path.join(self.root, "images", self.imgs[original_idx])
         label_path = os.path.join(self.root, "labels", self.labels[original_idx])
         img = Image.open(img_path).convert("RGB")
@@ -74,7 +74,7 @@ class ProstateDataset(torch.utils.data.Dataset):
         return img, target
 
     def __len__(self):
-        return len(self.imgs) * self.augmentation_count
+        return len(self.imgs) * self.oversampling_factor
 
     def get_image_count(self):
         return len(self.imgs)

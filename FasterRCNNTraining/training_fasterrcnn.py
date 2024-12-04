@@ -4,6 +4,7 @@ from os.path import join
 
 import torch
 from torch import optim
+from torch.nn.utils import clip_grad_norm_
 
 import CustomFasterRCNN
 import utils
@@ -41,6 +42,7 @@ momentum = args.momentum  # Optimiser momentum.
 weight_decay = args.weight_decay  # Optimiser weight decay.
 box_weight = args.box_weight  # Weight applied to box loss.
 cls_weight = args.box_weight  # Weight applied to classification loss.
+oversampling_factor = args.oversampling_factor  # Oversampling factor.
 
 ########################################################################################################################
 # Transformers used during data loading.
@@ -51,7 +53,7 @@ val_transforms = CustomFasterRCNN.get_validation_transforms(image_size)
 ########################################################################################################################
 # Set up datasets.
 ########################################################################################################################
-train_dataset = ProstateDataset(root=train_path, transforms=train_transforms, augmentation_count=1)
+train_dataset = ProstateDataset(root=train_path, transforms=train_transforms, oversampling_factor=oversampling_factor)
 val_dataset = ProstateDataset(root=val_path, transforms=val_transforms)
 
 ########################################################################################################################
@@ -70,7 +72,6 @@ custom_model = CustomFasterRCNN.CustomFasterRCNN(num_classes=3)
 custom_model.model.to(device)
 params = [p for p in custom_model.model.parameters() if p.requires_grad]
 optimiser = torch.optim.SGD(params, lr=learning_rate, momentum=momentum, weight_decay=weight_decay)
-# lr_schedular = optim.lr_scheduler.CosineAnnealingLR(optimiser, T_max=50, eta_min=0)
 lr_schedular = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimiser, T_0=learning_restart, eta_min=0)
 print(f'Model loaded.')
 
@@ -79,11 +80,12 @@ print(f'Model loaded.')
 ########################################################################################################################
 with open(join(save_path, 'training_parameters.txt'), 'w') as save_file:
     save_file.write(f'Start time: {script_start}\n'
-                    f''f'Training dataset: {train_path}\n'
+                    f'Training dataset: {train_path}\n'
                     f'Validation dataset: {val_path}\n'
                     f'Save path: {save_path}\n'
                     f'Batch size: {batch_size}\n'
                     f'Epochs: {total_epochs}\n'
+                    f'Warmup Epochs: {warmup_epochs}\n'
                     f'Device: {device}\n'
                     f'Patience: {patience}\n'
                     f'Patience delta: {patience_delta}\n'
@@ -106,6 +108,7 @@ print('=========================================================================
       f'Saving to: {save_path}.\n'
       f'Batch size: {batch_size}.\n'
       f'Epochs: {total_epochs}.\n'
+      f'Warmup Epochs: {warmup_epochs}.\n'
       f'Device: {device}\n'
       f'Patience: {patience}.\n'
       f'Patience delta: {patience_delta}.\n'
@@ -127,7 +130,11 @@ def main():
     print(f'Starting training on [{device}]:')
     early_stopping = EarlyStopping(patience=patience, delta=patience_delta)
     training_losses = []
+    training_cls_losses = []
+    training_bbox_losses = []
     validation_losses = []
+    validation_cls_losses = []
+    validation_bbox_losses = []
     training_learning_rates = []
     final_epoch_reached = 0
     for epoch in range(total_epochs):
@@ -136,6 +143,8 @@ def main():
         ################################################################################################################
         custom_model.model.train()
         epoch_train_loss = 0
+        epoch_train_cls_loss = 0
+        epoch_train_bbox_loss = 0
         for images, targets in train_loader:
             images = list(image.to(device) for image in images)
             targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
@@ -147,18 +156,30 @@ def main():
             bbox_loss = loss_dict['loss_box_reg']
             objectness_loss = loss_dict['loss_objectness']
             rpn_box_loss = loss_dict['loss_rpn_box_reg']
-
-            losses = cls_loss + bbox_loss + objectness_loss + rpn_box_loss
+            # Calculate total loss, can apply weights here.
+            losses = cls_loss * cls_weight + bbox_loss * box_weight + objectness_loss + rpn_box_loss
+            # Check for NaNs or Infs.
+            if torch.isnan(losses).any() or torch.isinf(losses).any():
+                print("Loss has NaNs or Infs, skipping this batch")
+                continue
             # Calculate gradients.
             losses.backward()
+            # Apply gradient clipping.
+            clip_grad_norm_(custom_model.model.parameters(), 2)
             optimiser.step()
             # Epoch loss per batch.
             epoch_train_loss += losses.item()
+            epoch_train_cls_loss += cls_loss.item()
+            epoch_train_bbox_loss += bbox_loss.item()
         # Step schedular once per epoch.
         lr_schedular.step()
         # Average epoch loss per image for all images.
         epoch_train_loss /= len(train_loader)
+        epoch_train_cls_loss /= len(train_loader)
+        epoch_train_bbox_loss /= len(train_loader)
         training_losses.append(epoch_train_loss)
+        training_cls_losses.append(epoch_train_cls_loss)
+        training_bbox_losses.append(epoch_train_bbox_loss)
         training_learning_rates.append(lr_schedular.get_last_lr()[0])
 
         ################################################################################################################
@@ -166,6 +187,8 @@ def main():
         ################################################################################################################
         custom_model.model.eval()
         epoch_validation_loss = 0
+        epoch_validation_cls_loss = 0
+        epoch_validation_bbox_loss = 0
         with torch.no_grad():
             for images, targets in val_loader:
                 images = list(image.to(device) for image in images)
@@ -181,10 +204,16 @@ def main():
                 losses = cls_loss + bbox_loss + objectness_loss + rpn_box_loss
 
                 epoch_validation_loss += losses.item()
+                epoch_validation_cls_loss += cls_loss.item()
+                epoch_validation_bbox_loss += bbox_loss.item()
 
             epoch_validation_loss /= len(val_loader)
+            epoch_validation_cls_loss /= len(val_loader)
+            epoch_validation_bbox_loss /= len(val_loader)
 
             validation_losses.append(epoch_validation_loss)
+            validation_cls_losses.append(epoch_validation_cls_loss)
+            validation_bbox_losses.append(epoch_validation_bbox_loss)
 
         ################################################################################################################
         # Display training and validation losses.
@@ -193,17 +222,17 @@ def main():
         print(f"\t{time_now}  -  Epoch {epoch + 1}/{total_epochs}, "
               f"Train Loss: {training_losses[-1]:0.4f}, "
               f"Validation Loss: {validation_losses[-1]:0.4f}, "
-              f"Learning Rate: {lr_schedular.get_last_lr()[0]:0.6f},", end=' ')
+              f"Learning Rate: {lr_schedular.get_last_lr()[0]:0.6f},", end=' ', flush=True)
 
         ################################################################################################################
         # Check for early stopping. If patience reached, model is saved and final plots are made.
         ################################################################################################################
         final_epoch_reached = epoch
-        if final_epoch_reached > warmup_epochs:
+        if final_epoch_reached + 1 > warmup_epochs:
             early_stopping(epoch_validation_loss, custom_model.model, epoch, optimiser, save_path)
 
-        utils.plot_losses(early_stopping.best_epoch + 1, training_losses,
-                          validation_losses,
+        utils.plot_losses(early_stopping.best_epoch + 1, training_losses, training_cls_losses, training_bbox_losses,
+                          validation_losses, validation_cls_losses, validation_bbox_losses,
                           training_learning_rates, save_path)
         if early_stopping.early_stop:
             print('Patience reached, stopping early.')
@@ -235,10 +264,12 @@ def main():
     run_time = script_end - script_start
     with open(join(save_path, 'training_parameters.txt'), 'a') as save_file:
         save_file.write(f'Final Epoch Reached: {final_epoch_reached}\n'
+                        f'Best Epoch: {early_stopping.best_epoch}\n'
                         f"End time: {script_end.strftime('%Y-%m-%d  %H:%M:%S')}\n"
                         f'Total run time: {run_time}')
 
     print('Training completed.\n'
+          f'Best Epoch: {early_stopping.best_epoch + 1}.\n'
           f"End time: {script_end.strftime('%Y-%m-%d  %H:%M:%S')}.\n"
           f'Total run time: {run_time}.')
     print('=====================================================================================================')
