@@ -250,7 +250,6 @@ def main():
         for images, targets in val_loader:
             images = list(image.to(device) for image in images)
             targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
-
             _, detections = custom_model.forward(images, targets)
 
             utils.plot_validation_results(detections, images, counter, save_path)
