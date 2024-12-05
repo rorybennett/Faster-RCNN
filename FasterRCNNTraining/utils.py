@@ -57,7 +57,7 @@ def get_arg_parser():
     parser.add_argument('-pd',
                         '--patience_delta',
                         type=int,
-                        default=0.001,
+                        default=0.005,
                         help='Training patience delta')
     parser.add_argument('-lr',
                         '--learning_rate',
