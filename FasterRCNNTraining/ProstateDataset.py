@@ -3,8 +3,11 @@ Custom dataset class for the prostate dataset. Up to two classes will exist, pro
 """
 import os
 
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 from PIL import Image
+from matplotlib import patches
 from natsort import natsorted
 from torchvision import tv_tensors
 from torchvision.transforms.v2 import functional as F
@@ -33,6 +36,51 @@ class ProstateDataset(torch.utils.data.Dataset):
         label_path = os.path.join(self.root, "labels", self.labels[original_idx])
         img = Image.open(img_path).convert("RGB")
 
+        target = self.get_targets(label_path, img, idx)
+        img = tv_tensors.Image(img)
+
+        if self.transforms is not None:
+            img, target = self.transforms(img, target)
+
+        return img, target
+
+    def __len__(self):
+        return len(self.imgs) * self.oversampling_factor
+
+    def get_image_count(self):
+        return len(self.imgs)
+
+    def verify_transforms(self, idx):
+        original_idx = idx // self.oversampling_factor
+        img_path = os.path.join(self.root, "images", self.imgs[original_idx])
+        label_path = os.path.join(self.root, "labels", self.labels[original_idx])
+        img = Image.open(img_path).convert("RGB")
+
+        target = self.get_targets(label_path, img, idx)
+        boxes = target['boxes']
+        img = tv_tensors.Image(img)
+
+        colours = ['g', 'b', 'r', 'magenta']
+        _, ax = plt.subplots(2)
+        ax[0].imshow(np.transpose(img, (1, 2, 0)))
+        for index, b in enumerate(boxes):
+            patch = patches.Rectangle((b[0], b[1]), b[2] - b[0], b[3] - b[1], linewidth=1,
+                                      edgecolor=colours[index], facecolor='none')
+            ax[0].add_patch(patch)
+
+        if self.transforms is not None:
+            img, target = self.transforms(img, target)
+
+        boxes = target['boxes']
+
+        ax[1].imshow(np.transpose(img, (1, 2, 0)))
+        for index, b in enumerate(boxes):
+            patch = patches.Rectangle((b[0], b[1]), b[2] - b[0], b[3] - b[1], linewidth=1,
+                                      edgecolor=colours[index % len(colours)], facecolor='none')
+            ax[1].add_patch(patch)
+        plt.show()
+
+    def get_targets(self, label_path, img, idx):
         # Read the label file
         boxes = []
         labels = []
@@ -55,8 +103,6 @@ class ProstateDataset(torch.utils.data.Dataset):
         # Convert boxes to the format expected by the model.
         boxes = torch.as_tensor(boxes, dtype=torch.float32)
         labels = torch.as_tensor(labels, dtype=torch.int64)
-
-        img = tv_tensors.Image(img)
         image_id = torch.tensor([idx])
         area = (boxes[:, 3] - boxes[:, 1]) * (boxes[:, 2] - boxes[:, 0])
         iscrowd = torch.zeros((len(boxes),), dtype=torch.int64)
@@ -68,16 +114,7 @@ class ProstateDataset(torch.utils.data.Dataset):
             "iscrowd": iscrowd
         }
 
-        if self.transforms is not None:
-            img, target = self.transforms(img, target)
-
-        return img, target
-
-    def __len__(self):
-        return len(self.imgs) * self.oversampling_factor
-
-    def get_image_count(self):
-        return len(self.imgs)
+        return target
 
     def validate_dataset(self):
         """
