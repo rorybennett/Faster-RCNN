@@ -4,6 +4,11 @@ from os.path import join
 import numpy as np
 from matplotlib import pyplot as plt, patches
 
+box_colours = ['g',
+               'b',
+               'r',
+               'magenta']
+
 
 def get_arg_parser():
     """
@@ -98,7 +103,8 @@ def get_arg_parser():
     return parser.parse_args()
 
 
-def plot_losses(best_epoch, training_losses, training_cls_losses, training_bbox_losses, validation_losses, validation_cls_losses,
+def plot_losses(best_epoch, training_losses, training_cls_losses, training_bbox_losses, validation_losses,
+                validation_cls_losses,
                 validation_bbox_losses, training_learning_rates, save_path):
     """
     Plot the training losses (combined, cls, and bbox) and validation losses (combined, cls, and bbox) along with the
@@ -159,48 +165,50 @@ def plot_losses(best_epoch, training_losses, training_cls_losses, training_bbox_
     plt.close()
 
 
-def plot_validation_results(validation_detections, validation_images, counter, save_path):
+def plot_validation_results(validation_detections, validation_images, starting_label, counter, save_path):
     """
-    Draw input images with detected bounding boxes on them. Only the top scoring box is drawn. This function only
-    works for prostate only or prostate and bladder detection.
+    Draw input images with detected bounding boxes on them. Only the top scoring box of each label/class
+    is displayed. Since FasterRCNN using label 0 for background and RetinaNet using label 0 for the first
+    class, there is an offset that is set using starting_label (for selecting box colour).
 
     :param validation_detections: Detection returned by the model in eval() mode.
     :param validation_images: Images that were given to the model for detection.
-    :param counter: Image counter, based on batch_size.
+    :param starting_label: Lowest label value (RetinaNet = 0, FasterRCNN = 1 since 0 is background).
+    :param counter: Image counter, based on batch_size, for saving images with unique names while maintaining
+                    validation dataset size.
     :param save_path: Save directory.
     """
     batch_number = counter
+    # Since batches are used, detections per image are delt with incrementally.
     for index, output in enumerate(validation_detections):
-        top_box_prostate = None
-        top_box_bladder = None
-        boxes = output['boxes']
-        labels = output['labels']
+        # Highest scoring box per label.
+        highest_scoring_boxes = {}
 
-        for i in range(len(labels)):
-            if labels[i] == 1 and top_box_prostate is None:
-                top_box_prostate = boxes[i].to('cpu')
-            elif labels[i] == 2 and top_box_bladder is None:
-                top_box_bladder = boxes[i].to('cpu')
+        for i in range(len(output['scores'])):
+            label = output['labels'][i].item()
+            score = output['scores'][i].item()
+            box = output['boxes'][i].tolist()
 
-            # Break the loop if both top boxes are found.
-            if top_box_prostate is not None and top_box_bladder is not None:
-                break
+            if label not in highest_scoring_boxes:
+                highest_scoring_boxes[label] = {'score': score, 'box': box}
+            else:
+                if score > highest_scoring_boxes[label]['score']:
+                    highest_scoring_boxes[label] = {'score': score, 'box': box}
+
+        # Sort by label.
+        sorted_highest_scoring_boxes = dict(sorted(highest_scoring_boxes.items()))
 
         _, ax = plt.subplots()
         ax.axis('off')
         ax.imshow(np.transpose(validation_images[index].to('cpu'), (1, 2, 0)))
-        if top_box_prostate is not None:
-            prostate_patch = patches.Rectangle((top_box_prostate[0], top_box_prostate[1]),
-                                               top_box_prostate[2] - top_box_prostate[0],
-                                               top_box_prostate[3] - top_box_prostate[1], linewidth=1,
-                                               edgecolor='g', facecolor='none')
-            ax.add_patch(prostate_patch)
-        if top_box_bladder is not None:
-            bladder_patch = patches.Rectangle((top_box_bladder[0], top_box_bladder[1]),
-                                              top_box_bladder[2] - top_box_bladder[0],
-                                              top_box_bladder[3] - top_box_bladder[1], linewidth=1,
-                                              edgecolor='blue', facecolor='none')
-            ax.add_patch(bladder_patch)
+
+        for label, result in sorted_highest_scoring_boxes.items():
+            box = result['box']
+            patch = patches.Rectangle((box[0], box[1]), box[2] - box[0], box[3] - box[1], linewidth=1,
+                                      edgecolor=box_colours[label - starting_label], facecolor='none')
+            ax.add_patch(patch)
+            ax.text(box[0], box[1], f'{label}', ha='left', color=box_colours[label - starting_label], weight='bold',
+                    va='bottom')
 
         plt.savefig(join(save_path, f'val_result_{batch_number}.png'))
         plt.close()

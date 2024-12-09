@@ -252,7 +252,7 @@ def main():
             targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
             _, detections = custom_model.forward(images, targets)
 
-            utils.plot_validation_results(detections, images, counter, save_path)
+            utils.plot_validation_results(detections, images, 1, counter, save_path)
 
             counter += batch_size
 
