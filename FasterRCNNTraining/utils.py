@@ -144,7 +144,7 @@ def plot_losses(best_epoch, training_losses, training_cls_losses, training_bbox_
     ax_lr.set_ylabel('Learning Rate x10$^{-2}$')
     ax_lr.legend(loc='upper right')
 
-    ax[1, 0].set_title('Validation Classification Losses')
+    ax[1, 0].set_title('Validation Classification Losses (weighted)')
     ax[1, 0].plot(epochs, validation_cls_losses, marker='*')
     ax[1, 0].axvline(x=best_epoch, color='green', linestyle='--')
     ax[1, 0].set_xlabel('Epoch')

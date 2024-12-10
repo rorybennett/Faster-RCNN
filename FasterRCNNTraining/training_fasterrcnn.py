@@ -201,7 +201,7 @@ def main():
                 objectness_loss = loss_dict['loss_objectness']
                 rpn_box_loss = loss_dict['loss_rpn_box_reg']
 
-                losses = cls_loss + bbox_loss + objectness_loss + rpn_box_loss
+                losses = cls_loss * cls_weight + bbox_loss * box_weight + objectness_loss + rpn_box_loss
 
                 epoch_validation_loss += losses.item()
                 epoch_validation_cls_loss += cls_loss.item()
