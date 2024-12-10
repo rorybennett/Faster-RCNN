@@ -41,7 +41,7 @@ learning_restart = args.learning_restart  # Learning rate schedular restart freq
 momentum = args.momentum  # Optimiser momentum.
 weight_decay = args.weight_decay  # Optimiser weight decay.
 box_weight = args.box_weight  # Weight applied to box loss.
-cls_weight = args.box_weight  # Weight applied to classification loss.
+cls_weight = args.cls_weight  # Weight applied to classification loss.
 oversampling_factor = args.oversampling_factor  # Oversampling factor.
 
 ########################################################################################################################
